@@ -66,6 +66,13 @@
   pids = []
 }).
 
+-record(erwa_sess,{
+  id=undefined,
+  pid=undefined,
+
+  realm=undefined,
+  details=[]
+}).
 
 -record(erwa_topic, {
   uri = undefined,
@@ -176,7 +183,7 @@ handle_wamp_message({hello,RealmName,Details},#state{sess_id=undefined}=State) -
   %% @todo implement a way to chek if authentication is needed
   %send_message_to({challenge,wampcra,[{challenge,JSON-Data}]},self());
   T_Realm = fun() ->
-              case mnesia:read(realm,RealmName) of
+              case mnesia:read(erwa_realm,RealmName) of
                 [RealmData] -> RealmData;
                 [] -> undefined
               end
@@ -194,6 +201,7 @@ handle_wamp_message({hello,RealmName,Details},#state{sess_id=undefined}=State) -
   case RealmAccepting of
     true ->
       {ok,SessionId} = create_session(Realm,Details),
+      ok = add_this_to_realm(Realm),
       NewState = State#state{sess_id=SessionId},
       {{welcome,SessionId,?ROUTER_DETAILS},NewState};
     _ ->
@@ -229,7 +237,7 @@ handle_wamp_message({subscribe,RequestId,Options,SubscriptionURI},#state{subs=Su
           %% if it is an error, what is the message?
           {{subscribed,RequestId,SubscriptionId},State};
         false ->
-          {ok,SubscriptionId,NewState} = add_to_subscription(SubscriptionURI,State),
+          {ok,SubscriptionId,NewState} = add_exact_subscription(SubscriptionURI,State),
           {{subscribed,RequestId,TopicId},NewState}
       end;
 
@@ -309,6 +317,24 @@ handle_wamp_message(Msg,State) ->
   {shutdown,State}.
 
 
+create_session(Realm,Details) ->
+  Id = gen_id(),
+  T = fun() ->
+        case mnesia:read(erwa_sess,Id) of
+          [Found] ->
+            false;
+          [] ->
+            ok = mnesia:write(#erwa_sess{id=id,realm=Realm,details=Details,pid=self()}),
+            true
+        end
+      end,
+  {atomic,Done} =mnesia:transaction(T).
+  case Done of
+    true ->
+      {ok,Id};
+    false ->
+      create_session(Realm,Details)
+  end.
 
 add_this_to_realm(Name) ->
   T = fun() ->
@@ -356,17 +382,17 @@ create_topic(TopicUri) ->
 
 
 %% subscribe a new session to an existing topic
--spec add_to_subscription(TopicUri :: binary() ,State :: #state{}) -> {ok,non_neg_integer(),#state{}}.
-add_to_subscription(SubscriptionURI,#state{sess_id=SessionId, subs=Subscriptions} = State) ->
+-spec add_to_subscription(SubscriptionUri :: binary() ,State :: #state{}) -> {ok,non_neg_integer(),#state{}}.
+add_exact_subscription(SubscriptionURI,#state{sess_id=SessionId, subs=Subscriptions} = State) ->
   T = fun() ->
-        [Subscription] = mnesia:match_object(erwa_exact_sub,#erwa_exact_sub{uri=TopicUri,_='_'},write),
-        #erwa_topic{id=T_Id,uri=Subscriptions}=Topic,
-        Subs = [SessionId|Topic#erwa_topic.subscribers],
-        ok = mnesia:write(Topic#erwa_topic{subscribers=Subs}),
-        T_Id
+        [Subscription] = mnesia:match_object(erwa_exact_sub,#erwa_exact_sub{uri=SubscriptionURI,_='_'},write),
+        #erwa_exact_sub{id=S_Id,uri=Subscriptions}=Subscription,
+        Subs = [SessionId|Subscription#erwa_exact_sub.subscribers],
+        ok = mnesia:write(Subscription#erwa_exact_sub{subscribers=Subs}),
+        S_Id
       end,
-  {atomic,TopicId} = mnesia:transaction(T),
-  {ok,TopicId,State#state{topics=[{TopicId,TopicUri}|Topics]}}.
+  {atomic,SubscriptionId} = mnesia:transaction(T),
+  {ok,TopicId,State#state{subs=[{SubscriptionId,SubscriptionURI}|Subscriptions]}}.
 
 -spec remove_from_subscription(TopicId :: non_neg_integer() ,State :: #state{}) -> {ok,#state{}}.
 remove_from_subscription(TopicId,#state{sess_id=SessionId, topics=Topics} = State) ->
@@ -391,6 +417,7 @@ send_event_to_topic(Options,TopicUri,Arguments,ArgumentsKw,State) ->
         T_Id
       end,
   {atomic,TopicId} = mnesia:transaction(T),
+  ok.
 
 
 
@@ -426,6 +453,9 @@ init_db() ->
   {atomic,ok} = mnesia:create_table(erwa_realm,[{attributes,record_info(fields,erwa_realm)},
                                              {type,set}]),
   {atomic,ok} = mnesia:create_table(erwa_topic,[{attributes,record_info(fields,erwa_topic)},
+                                           {type,set}]),
+  {atomic,ok} = mnesia:create_table(erwa_sess,[{attributes,record_info(fields,erwa_sess)},
+                                           {index,[pid]},
                                            {type,set}]),
   {atomic,ok} = mnesia:create_table(erwa_exact_sub,[{attributes,record_info(fields,erwa_exact_sub)},
                                            {index,[uri]},
