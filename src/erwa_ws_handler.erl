@@ -89,11 +89,11 @@ find_supported_protocol([]) ->
   none;
 find_supported_protocol([?WSJSON|_T]) ->
   {json,text,?WSJSON};
-find_supported_protocol([?WSJSON_BATCHED|T]) ->
+find_supported_protocol([?WSJSON_BATCHED|_T]) ->
   {json_batched,text,?WSJSON_BATCHED};
 find_supported_protocol([?WSMSGPACK|_T]) ->
   {msgpack,binary,?WSMSGPACK};
-find_supported_protocol([?WSMSGPACK_BATCHED|T]) ->
+find_supported_protocol([?WSMSGPACK_BATCHED|_T]) ->
   {msgpack_batched,binary,?WSMSGPACK_BATCHED};
 find_supported_protocol([_|T]) ->
   find_supported_protocol(T).
@@ -103,9 +103,6 @@ find_supported_protocol([_|T]) ->
 
 
 -ifdef(TEST).
-
-header_find_test() ->
-  {json,text,?WSJSON} = find_supported_protocol([?WSJSON_BATCHED,?WSJSON]).
 
 
 -endif.
